@@ -9,4 +9,5 @@
 - raster_plus.py CV+ 增强视觉管线（LSD 虚线重建 + 文字掩膜 + 弧拟合 + 可选 vtracer）
 - ocr_engines.py OCR 引擎抽象层（tesseract / PaddleOCR，lazy import + 自动降级）
 - vlm.py        Qwen2.5-VL 标题栏结构化抽取（GPU 可选组件，lazy import）
+- gpu_detect.py GPU 环境自动探测（torch.cuda/mps/nvidia-smi 三级，lazy）
 """

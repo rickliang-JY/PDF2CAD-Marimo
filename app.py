@@ -44,7 +44,7 @@ def _():
         sys.path.insert(0, _ROOT)
 
     try:
-        from core import backends, compare, detect, ocr_engines, pipeline, vlm
+        from core import backends, compare, detect, gpu_detect, ocr_engines, pipeline, vlm
     except ImportError:
         # molab / 单文件场景：core/ 不在本地时，从 GitHub 仓库引导下载
         import io
@@ -59,9 +59,9 @@ def _():
             _zf.extractall(_extract)
         _repo_root = next(_extract.glob("PDF2CAD-Marimo-*"))
         sys.path.insert(0, str(_repo_root))
-        from core import backends, compare, detect, ocr_engines, pipeline, vlm
+        from core import backends, compare, detect, gpu_detect, ocr_engines, pipeline, vlm
 
-    return backends, compare, detect, mo, ocr_engines, os, pipeline, tempfile, vlm
+    return backends, compare, detect, gpu_detect, mo, ocr_engines, os, pipeline, tempfile, vlm
 
 
 @app.cell
@@ -71,10 +71,22 @@ def _(mo):
 
     上传 PDF 工程图纸（支持多页、矢量/扫描混合），选择转换模型，
     输出 DXF 下载，并提供 **原 PDF / DXF 渲染 / 叠差图** 三图并排对比与 IoU 指标。
-
-    > 运行环境：无 GPU、内存受限。YOLO 后端需要 `ultralytics` 与权重文件，
-    > 缺失时自动回退到经典视觉管线（不会报错中断）。
     """)
+    return
+
+
+@app.cell
+def _(gpu_detect, mo):
+    """运行环境自动检测（GPU / 组件可用性一目了然）。"""
+    _g = gpu_detect.gpu_info()
+    _icon = "🎮" if _g["available"] else "💻"
+    mo.md(
+        f"> {_icon} **运行环境自动检测**：{_g['detail']}\n>\n"
+        "> 选择 YOLO 等视觉模型时无需手工准备环境：在「⚙️ 高级选项」打开"
+        "「自动下载/安装缺失组件」后，缺包自动 pip 安装、权重留空自动下载"
+        "通用预训练权重（需联网，首次较慢）；不可用则自动回退经典视觉管线，"
+        "不会报错中断。"
+    )
     return
 
 
@@ -164,11 +176,18 @@ def _(avail_ocr, has_ultra, has_vlm, mo):
     _ocr_opts = dict(avail_ocr)
     if "tesseract" not in _ocr_opts:  # 极端情况：系统连 tesseract 都缺失
         _ocr_opts["tesseract"] = "Tesseract（当前不可用）"
-    ocr_sel = mo.ui.dropdown(options=_ocr_opts, label="OCR 引擎：")
+    # 增加 auto 选项放首位；marimo dict 选项是 {显示标签: 值}，需反转
+    _auto_label = "自动（优先 PaddleOCR，缺失降级 Tesseract）"
+    _ocr_dd_opts = {_auto_label: "auto"}
+    _ocr_dd_opts.update({v: k for k, v in _ocr_opts.items()})
+    ocr_sel = mo.ui.dropdown(options=_ocr_dd_opts, value=_auto_label,
+                             label="OCR 引擎：")
     yolo_weights_txt = mo.ui.text(
-        label="YOLO 权重路径（.pt，留空则回退 CV 管线）：",
+        label="YOLO 权重路径（.pt；留空自动下载通用预训练权重 yolov8n.pt）：",
         placeholder="/path/to/drawing_yolo.pt")
     vlm_sw = mo.ui.switch(label="VLM 标题栏结构化抽取（Qwen2.5-VL）")
+    auto_setup_sw = mo.ui.switch(
+        label="自动下载/安装缺失组件（需联网，首次较慢）")
 
     _gpu_hint = ("<span style='color:#999'>{name} 未安装——GPU 环境 "
                  "<code>pip install -r requirements-gpu.txt</code> 后启用</span>")
@@ -182,16 +201,17 @@ def _(avail_ocr, has_ultra, has_vlm, mo):
             _gpu_hint.format(name="VLM 组件（transformers/qwen-vl-utils/torch）")))
     mo.vstack([
         mo.accordion({
-            "⚙️ 高级选项（OCR 引擎 / YOLO 权重 / VLM 标题栏抽取）":
-                mo.vstack([ocr_sel, yolo_weights_txt, vlm_sw] + _hints)
+            "⚙️ 高级选项（OCR 引擎 / YOLO 权重 / VLM 标题栏抽取 / 自动安装）":
+                mo.vstack([ocr_sel, yolo_weights_txt, vlm_sw, auto_setup_sw]
+                          + _hints)
         }),
     ])
-    return ocr_sel, vlm_sw, yolo_weights_txt
+    return auto_setup_sw, ocr_sel, vlm_sw, yolo_weights_txt
 
 
 @app.cell
-def _(mo, model_sel, ocr_sel, os, pages_sel, pdf_path, pipeline, run_btn,
-      vlm_sw, work_dir, yolo_weights_txt):
+def _(auto_setup_sw, mo, model_sel, ocr_sel, os, pages_sel, pdf_path, pipeline,
+      run_btn, vlm_sw, work_dir, yolo_weights_txt):
     mo.stop(not run_btn.value,
             mo.md("⏳ 设置完成后点击「开始转换」"))
 
@@ -209,7 +229,8 @@ def _(mo, model_sel, ocr_sel, os, pages_sel, pdf_path, pipeline, run_btn,
         pdf_path, model_sel.value, out_dir, pages=_pages, progress_cb=_cb,
         ocr_engine=ocr_sel.value,
         yolo_weights=(yolo_weights_txt.value or None),
-        extract_title=bool(vlm_sw.value))
+        extract_title=bool(vlm_sw.value),
+        auto_setup=bool(auto_setup_sw.value))
     _prog.update(progress=_n, subtitle="全部完成")
     mo.md(f"✅ 转换完成，耗时 **{result['elapsed_sec']:.1f} 秒**，"
           f"产出 {sum(1 for r in result['pages'] if r['dxf_path'])} 个 DXF")

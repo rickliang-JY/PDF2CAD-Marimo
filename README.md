@@ -22,6 +22,21 @@
 - WebAssembly 预览（`/wasm` 后缀）不支持本应用（PyMuPDF/OpenCV 不能在 Pyodide 运行），
   请使用服务器模式预览。
 
+## 运行环境自动检测与自动安装
+
+平台启动时自动检测 GPU（torch.cuda → torch.mps → nvidia-smi 三级探测，
+`core/gpu_detect.py`），结果展示在首页顶部。
+
+选择 YOLO 等视觉模型**无需手工准备环境**：在「⚙️ 高级选项」打开
+「自动下载/安装缺失组件」（`auto_setup`）后：
+
+- `ultralytics` 未安装 → 自动 `pip install ultralytics`（需联网，首次较慢）
+- 权重路径留空 → 自动下载通用预训练权重 `yolov8n.pt`（COCO 通用检测，
+  **非图纸专用**，正式使用建议训练图纸权重后填入路径；
+  亦可用环境变量 `PDF2CAD_YOLO_WEIGHTS` 覆盖默认权重名）
+- 自动安装/下载失败 → 自动回退经典视觉管线（`engine='yolo->cv-fallback'`），
+  不会报错中断
+
 ## 安装
 
 ```bash
@@ -147,7 +162,7 @@ pip install -r requirements-gpu.txt   # 仅 GPU 机器
 
 | 组件 | 作用 | 安装包 | 启用后行为变化 |
 |---|---|---|---|
-| YOLO 图纸元素检测 | 检测图框/标题栏/表格/符号 | `ultralytics` + 自备权重 | `yolo` 后端不再回退：检测框（中文类别 + 置信度）写入 DXF `DETECTION` 图层，框内墨迹抠除、框外走 CV+ 矢量化；标题栏框存入 `stats['title_block_bbox']` 供 VLM 复用 |
+| YOLO 图纸元素检测 | 检测图框/标题栏/表格/符号 | `ultralytics` + 权重（可自动安装/下载） | `yolo` 后端不再回退：检测框（中文类别 + 置信度）写入 DXF `DETECTION` 图层，框内墨迹抠除、框外走 CV+ 矢量化；标题栏框存入 `stats['title_block_bbox']` 供 VLM 复用 |
 | PaddleOCR 引擎 | 中文/旋转文字识别（PP-OCRv5） | `paddlepaddle-gpu` + `paddleocr` | UI「OCR 引擎」下拉出现 paddle 选项；`ocr_engine='paddle'/'auto'` 时文字提取走 PaddleOCR（旋转框四点 → bbox+角度，DXF TEXT 应用旋转） |
 | VLM 标题栏抽取 | 标题栏结构化（图名/图号/比例/日期/设计/审核/单位） | `torch` + `transformers` + `qwen-vl-utils` + `accelerate` | UI 打开「VLM 标题栏抽取」开关后，每页转换后调用 Qwen2.5-VL（YOLO 标题栏框优先，否则右下角 40%×25% 启发式裁剪），结果展示在结果表下方、写入 `stats['title_block']` 并随 zip 附带 `title_block.json` |
 

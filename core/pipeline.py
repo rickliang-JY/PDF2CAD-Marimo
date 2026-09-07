@@ -77,7 +77,8 @@ def convert_pdf(pdf_path: str, model: str, out_dir: str,
                 progress_cb: Optional[Callable[[int, int, str], None]] = None,
                 ocr_engine: str = "auto",
                 yolo_weights: Optional[str] = None,
-                extract_title: bool = False) -> dict:
+                extract_title: bool = False,
+                auto_setup: bool = False) -> dict:
     """整本（或指定页集）转换入口。
 
     参数:
@@ -87,10 +88,13 @@ def convert_pdf(pdf_path: str, model: str, out_dir: str,
         pages:      0 起页码列表；None 表示全部页
         progress_cb: 进度回调 progress_cb(i, n, msg)
         ocr_engine: OCR 引擎（'auto'/'tesseract'/'paddle'），透传 cv+/yolo/auto
-        yolo_weights: YOLO 权重路径（仅 model='yolo' 时使用）
+        yolo_weights: YOLO 权重路径（仅 model='yolo' 时使用；留空且
+            auto_setup 开启时自动下载通用预训练权重）
         extract_title: 开启后每页转换后尝试 VLM 标题栏结构化抽取，
             结果存该页 stats['title_block']，并随 zip 附带 title_block.json
             （VLM 组件不可用时静默跳过，不抛异常）
+        auto_setup: 开启后 yolo/auto 路由允许自动 pip 安装缺失的
+            ultralytics 并自动下载预训练权重（需联网，首次较慢）
 
     返回:
         {'pages': [BackendResult...], 'page_kinds': [...], 'zip_path': str,
@@ -117,8 +121,11 @@ def convert_pdf(pdf_path: str, model: str, out_dir: str,
     def _convert_page(p: int) -> dict:
         if model == "yolo":
             return convert_fn(pdf_path, p, out_dir, weights=yolo_weights,
-                              ocr_engine=ocr_engine)
-        if model in ("cv+", "auto"):
+                              ocr_engine=ocr_engine, auto_setup=auto_setup)
+        if model == "auto":
+            return convert_fn(pdf_path, p, out_dir, ocr_engine=ocr_engine,
+                              auto_setup=auto_setup)
+        if model == "cv+":
             return convert_fn(pdf_path, p, out_dir, ocr_engine=ocr_engine)
         return convert_fn(pdf_path, p, out_dir)
 

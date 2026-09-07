@@ -54,8 +54,57 @@ MODELS = {
     "vector": "纯 PDF 矢量提取",
     "cv": "经典视觉管线（OpenCV 骨架矢量化）",
     "cv+": "增强视觉管线（LSD+文字掩膜+虚线重建）",
-    "yolo": "YOLO 视觉模型 + 矢量化（需 ultralytics 与权重）",
+    "yolo": "YOLO 视觉模型 + 矢量化（可自动下载安装）",
 }
+
+# YOLO 通用预训练权重（留空时自动下载；ultralytics 首次使用会从官方源拉取。
+# 注意：COCO 通用权重非图纸专用，正式使用建议训练图纸权重后填入路径。
+# 可用环境变量 PDF2CAD_YOLO_WEIGHTS 覆盖默认值）
+DEFAULT_YOLO_WEIGHTS = os.environ.get("PDF2CAD_YOLO_WEIGHTS", "yolov8n.pt")
+
+
+def _pip_install(spec: str, timeout: int = 600) -> bool:
+    """尝试 pip 安装（用于自动安装缺失组件），失败返回 False，绝不抛异常。"""
+    import subprocess
+    try:
+        proc = subprocess.run([sys.executable, "-m", "pip", "install", "-q", spec],
+                              capture_output=True, text=True, timeout=timeout)
+        return proc.returncode == 0
+    except Exception as exc:
+        logger.warning("pip install %s 异常: %s", spec, exc)
+        return False
+
+
+def _ensure_ultralytics(auto_setup: bool) -> "tuple[bool, Optional[str]]":
+    """探测/按需自动安装 ultralytics。返回 (可用?, 说明或 None)。"""
+    try:
+        import ultralytics  # noqa: F401
+        return True, None
+    except Exception:
+        pass
+    if not auto_setup:
+        return False, ("未安装 ultralytics（GPU 环境请 "
+                       "pip install -r requirements-gpu.txt，"
+                       "或在「高级选项」打开「自动下载/安装缺失组件」）")
+    if _pip_install("ultralytics"):
+        try:
+            import ultralytics  # noqa: F401
+            return True, "已自动安装 ultralytics"
+        except Exception as exc:
+            return False, f"自动安装 ultralytics 后导入失败（{exc}）"
+    return False, "自动安装 ultralytics 失败（pip install 未成功，可能无网络/权限）"
+
+
+def _resolve_weights(weights: Optional[str]) -> "tuple[Optional[str], Optional[str]]":
+    """权重解析：用户路径有效则用之；路径无效返回 (None, 原因)；
+    留空则返回 (通用预训练权重名, 自动下载说明)。"""
+    if weights and os.path.isfile(str(weights)):
+        return str(weights), None
+    if weights:
+        return None, f"指定的权重文件不存在：{weights}"
+    return DEFAULT_YOLO_WEIGHTS, (
+        f"未提供权重，将自动下载通用预训练权重 {DEFAULT_YOLO_WEIGHTS}"
+        "（COCO 通用检测，非图纸专用；建议训练图纸权重后填入路径）")
 
 
 def _out_dxf_path(pdf_path: str, page_num: int, out_dir: str) -> str:
@@ -249,25 +298,33 @@ def _pick_title_block_bbox(boxes) -> Optional[tuple]:
 
 def convert_yolo(pdf_path: str, page_num: int, out_dir: str,
                  dpi: int = 200, weights: Optional[str] = None,
-                 ocr_engine: str = "auto") -> BackendResult:
+                 ocr_engine: str = "auto",
+                 auto_setup: bool = False) -> BackendResult:
     """YOLO 检测图纸元素（图框/标题栏/表格/符号），检测框写入 DXF 的
     DETECTION 图层（LWPOLYLINE 矩形框 + 中文类别 TEXT 标注 + 置信度），
     框内墨迹抠除后，框外区域走 CV+ 增强管线（RasterPlusConverter）矢量化，
     两者合并进同一 DXF。标题栏检测框存入 stats['title_block_bbox']。
 
-    ultralytics 或权重不可用时：warnings 追加中文说明并回退 convert_cv
+    auto_setup=True 时：ultralytics 缺失会尝试 pip 自动安装；
+    weights 留空时自动下载通用预训练权重（DEFAULT_YOLO_WEIGHTS）。
+    组件仍不可用时：warnings 追加中文说明并回退 convert_cv
     （engine='yolo->cv-fallback'）。本函数绝不抛异常。
     """
     fallback_reason: Optional[str] = None
-    try:
-        import ultralytics  # noqa: F401 仅探测是否安装（lazy import）
-        has_ultra = True
-    except Exception:
-        has_ultra = False
+    pre_warnings: list[str] = []
+    has_ultra, ultra_note = _ensure_ultralytics(auto_setup)
     if not has_ultra:
-        fallback_reason = "未安装 ultralytics（GPU 环境请 pip install -r requirements-gpu.txt）"
-    elif not weights or not os.path.isfile(str(weights)):
-        fallback_reason = "未提供 YOLO 权重文件（weights 参数为空或文件不存在）"
+        fallback_reason = ultra_note
+    else:
+        if ultra_note:  # 自动安装成功的提示
+            pre_warnings.append(ultra_note)
+        resolved, w_note = _resolve_weights(weights)
+        if resolved is None:
+            fallback_reason = w_note
+        else:
+            weights = resolved
+            if w_note:
+                pre_warnings.append(w_note)
 
     if fallback_reason is not None:
         res = convert_cv(pdf_path, page_num, out_dir, dpi=dpi)
@@ -297,6 +354,7 @@ def convert_yolo(pdf_path: str, page_num: int, out_dir: str,
         stats = dict(conv.stats)
         warnings: list[str] = ["光栅矢量化是近似重建；检测框位于 DETECTION 图层，"
                                "框内区域未矢量化"]
+        warnings.extend(pre_warnings)  # 自动安装/自动下载等提示
         # 管线内部 warning（tesseract/vtracer 降级等）并入后端 warnings
         warnings.extend(stats.pop("warnings", []) or [])
         del masked
@@ -340,11 +398,12 @@ def convert_yolo(pdf_path: str, page_num: int, out_dir: str,
 # 后端 5：自动路由（逐页判定）
 # --------------------------------------------------------------------------- #
 def convert_auto(pdf_path: str, page_num: int, out_dir: str,
-                 ocr_engine: str = "auto") -> BackendResult:
+                 ocr_engine: str = "auto",
+                 auto_setup: bool = False) -> BackendResult:
     """detect.page_kind：'vector' -> convert_vector；'scan' -> yolo/cv+。
 
-    扫描页路由：ultralytics 可 import 时走 YOLO 视觉管线（框外区域用
-    CV+ 矢量化）；不可用时由 CV+ 增强视觉管线兜底。
+    扫描页路由：ultralytics 可 import（或 auto_setup 开启允许自动安装）时走
+    YOLO 视觉管线（框外区域用 CV+ 矢量化）；否则由 CV+ 增强视觉管线兜底。
     ocr_engine 透传到扫描页管线（默认 'auto'，行为与旧版一致）。
     """
     doc = pymupdf.open(pdf_path)
@@ -353,14 +412,10 @@ def convert_auto(pdf_path: str, page_num: int, out_dir: str,
     finally:
         doc.close()
     if kind == "scan":
-        try:
-            import ultralytics  # noqa: F401 仅探测是否安装（lazy import）
-            has_ultra = True
-        except Exception:
-            has_ultra = False
-        if has_ultra:
+        has_ultra, _ = _ensure_ultralytics(False)  # 只探测，路由处不触发安装
+        if has_ultra or auto_setup:
             res = convert_yolo(pdf_path, page_num, out_dir,
-                               ocr_engine=ocr_engine)
+                               ocr_engine=ocr_engine, auto_setup=auto_setup)
             res["warnings"].insert(0, "自动判定：该页为扫描页，路由到 YOLO 视觉管线")
             return res
         res = convert_cvplus(pdf_path, page_num, out_dir, ocr_engine=ocr_engine)

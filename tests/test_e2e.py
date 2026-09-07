@@ -492,12 +492,49 @@ def run_all() -> None:
     except Exception as exc:
         check("marimo check app.py", False, repr(exc))
 
-    # ---- 验收 7b：marimo dict 下拉必须 {标签: 值}（回归：曾致未知模型错误） ----
-    src_app = (ROOT / "app.py").read_text(encoding="utf-8")
+    # ---- 验收 7b：GPU 探测与自动下载/安装逻辑 ----
+    from core import gpu_detect
+    from core.backends import (DEFAULT_YOLO_WEIGHTS, _ensure_ultralytics,
+                               _pip_install, _resolve_weights, convert_yolo)
+    gi = gpu_detect.gpu_info()
+    check("gpu_info 返回结构完整",
+          isinstance(gi, dict) and {"available", "backend", "devices",
+                                    "detail"} <= set(gi)
+          and isinstance(gi["available"], bool) and gi["detail"],
+          f"available={gi['available']} backend={gi['backend']}")
+
+    w, note = _resolve_weights(None)
+    check("权重留空 -> 自动下载通用预训练权重",
+          w == DEFAULT_YOLO_WEIGHTS and note and "自动下载" in note,
+          f"weights={w}")
+    w2, note2 = _resolve_weights("/definitely/not/exist.pt")
+    check("权重路径无效 -> 返回 None + 原因",
+          w2 is None and note2 and "不存在" in note2)
+    ok_u, note_u = _ensure_ultralytics(False)
+    try:
+        import ultralytics  # noqa: F401
+        check("_ensure_ultralytics(False) 探测", ok_u is True)
+    except ImportError:
+        check("_ensure_ultralytics(False) 探测",
+              ok_u is False and note_u and "自动下载" in note_u,
+              note_u[:60] if note_u else "")
+    check("_pip_install 假包返回 False 不抛异常",
+          _pip_install("definitely-not-a-real-pkg-pdf2cad-xyz",
+                       timeout=90) is False)
+    # auto_setup=False 时 yolo 缺包仍走降级（不触发安装）
+    ry3 = convert_yolo(pdf_path, 1, os.path.join(tmp, "out_yolo_nosetup"),
+                       auto_setup=False)
+    check("auto_setup=False 时 yolo 降级不回自动安装",
+          ry3["engine"] in ("yolo", "yolo->cv-fallback")
+          and ry3["warnings"], f"engine={ry3['engine']}")
+
+    # ---- 验收 7c：marimo dict 下拉必须 {标签: 值}（回归：曾致未知模型错误） ----
+    src_app = open(os.path.join(ROOT, "app.py"), encoding="utf-8").read()
     check("下拉 dict 选项已按 {标签: 值} 反转",
           "options={v: k for k, v in backends.MODELS.items()}" in src_app
           and "options=backends.MODELS" not in src_app
-          and "options=_ocr_opts)" not in src_app)
+          and "options=_ocr_opts" not in src_app
+          and "options=_ocr_dd_opts" in src_app)
 
     # ---- 验收 8：PASS/FAIL 汇总 ----
     n_pass = sum(1 for _, ok, _ in RESULTS if ok)
