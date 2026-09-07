@@ -146,20 +146,20 @@ def _(analysis, backends, mo):
 @app.cell
 def _(mo, ocr_engines, vlm):
     """GPU 可选组件可用性探测（全部 lazy import，绝不抛异常）。"""
-    _avail_ocr = ocr_engines.available_engines()
+    avail_ocr = ocr_engines.available_engines()
     try:
         import ultralytics  # noqa: F401 仅探测是否安装
-        _has_ultra = True
+        has_ultra = True
     except Exception:
-        _has_ultra = False
-    _has_vlm = vlm.vlm_available()
-    return _avail_ocr, _has_ultra, _has_vlm
+        has_ultra = False
+    has_vlm = vlm.vlm_available()
+    return avail_ocr, has_ultra, has_vlm
 
 
 @app.cell
-def _(_avail_ocr, _has_ultra, _has_vlm, mo):
+def _(avail_ocr, has_ultra, has_vlm, mo):
     """高级选项（GPU 可选组件）：折叠面板，未安装的组件显示灰色提示而非隐藏。"""
-    _ocr_opts = dict(_avail_ocr)
+    _ocr_opts = dict(avail_ocr)
     if "tesseract" not in _ocr_opts:  # 极端情况：系统连 tesseract 都缺失
         _ocr_opts["tesseract"] = "Tesseract（当前不可用）"
     ocr_sel = mo.ui.dropdown(options=_ocr_opts, label="OCR 引擎：")
@@ -171,11 +171,11 @@ def _(_avail_ocr, _has_ultra, _has_vlm, mo):
     _gpu_hint = ("<span style='color:#999'>{name} 未安装——GPU 环境 "
                  "<code>pip install -r requirements-gpu.txt</code> 后启用</span>")
     _hints = []
-    if "paddle" not in _avail_ocr:
+    if "paddle" not in avail_ocr:
         _hints.append(mo.md(_gpu_hint.format(name="PaddleOCR 引擎")))
-    if not _has_ultra:
+    if not has_ultra:
         _hints.append(mo.md(_gpu_hint.format(name="YOLO 后端（ultralytics）")))
-    if not _has_vlm:
+    if not has_vlm:
         _hints.append(mo.md(
             _gpu_hint.format(name="VLM 组件（transformers/qwen-vl-utils/torch）")))
     mo.vstack([
