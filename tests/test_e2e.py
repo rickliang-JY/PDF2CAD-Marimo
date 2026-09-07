@@ -535,6 +535,10 @@ def run_all() -> None:
           and "options=backends.MODELS" not in src_app
           and "options=_ocr_opts" not in src_app
           and "options=_ocr_dd_opts" in src_app)
+    # 回归：progress_bar 的 update 必须在 with 语句内的 ProgressBar 上调用
+    check("progress_bar 使用 with 上下文（跨版本安全用法）",
+          "with mo.status.progress_bar(" in src_app
+          and ".update(progress=" not in src_app)
 
     # ---- 验收 8：PASS/FAIL 汇总 ----
     n_pass = sum(1 for _, ok, _ in RESULTS if ok)

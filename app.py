@@ -219,19 +219,30 @@ def _(auto_setup_sw, mo, model_sel, ocr_sel, os, pages_sel, pdf_path, pipeline,
     out_dir = os.path.join(work_dir, "out")
     _n = len(_pages) if _pages else len(
         __import__("pymupdf").open(pdf_path))
-    _prog = mo.status.progress_bar(total=_n, title="正在转换", subtitle="准备中…")
 
-    def _cb(i, n, msg):
-        # progress_cb(i, n, msg)：驱动 marimo 进度条
-        _prog.update(progress=i, subtitle=msg)
+    # mo.status.progress_bar 返回包装对象，update 只在 with 语句内
+    # 拿到的 ProgressBar 上（跨版本唯一安全用法）
+    with mo.status.progress_bar(
+            total=_n, title="正在转换", subtitle="准备中…",
+            completion_title="转换完成") as _prog:
 
-    result = pipeline.convert_pdf(
-        pdf_path, model_sel.value, out_dir, pages=_pages, progress_cb=_cb,
-        ocr_engine=ocr_sel.value,
-        yolo_weights=(yolo_weights_txt.value or None),
-        extract_title=bool(vlm_sw.value),
-        auto_setup=bool(auto_setup_sw.value))
-    _prog.update(progress=_n, subtitle="全部完成")
+        _state = {"done": 0}
+
+        def _cb(i, n, msg):
+            # pipeline 每页调两次：开始(i)与完成(i+1)，完成时推进一格
+            if i > _state["done"]:
+                _prog.update(increment=i - _state["done"], subtitle=msg)
+                _state["done"] = i
+            else:
+                _prog.update(increment=0, subtitle=msg)
+
+        result = pipeline.convert_pdf(
+            pdf_path, model_sel.value, out_dir, pages=_pages, progress_cb=_cb,
+            ocr_engine=ocr_sel.value,
+            yolo_weights=(yolo_weights_txt.value or None),
+            extract_title=bool(vlm_sw.value),
+            auto_setup=bool(auto_setup_sw.value))
+        _prog.update(increment=0, subtitle="全部完成")
     mo.md(f"✅ 转换完成，耗时 **{result['elapsed_sec']:.1f} 秒**，"
           f"产出 {sum(1 for r in result['pages'] if r['dxf_path'])} 个 DXF")
     return (result,)
