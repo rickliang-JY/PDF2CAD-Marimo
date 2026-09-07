@@ -730,6 +730,18 @@ class PDFToDXFConverter:
                     self.convert_quad(item)
                 elif kind == "c":
                     bezier_run.append(item)
+                    if self._fill_active:
+                        # 填充路径的贝塞尔边界：采样为折线点累积进 fill_runs，
+                        # 否则实心箭头/符号等由曲线围成的填充会丢失 HATCH
+                        _, b1, b2, b3, b4 = item
+                        pts = [_bezier_point(
+                            (b1.x, b1.y), (b2.x, b2.y),
+                            (b3.x, b3.y), (b4.x, b4.y), i / 16.0)
+                            for i in range(17)]
+                        if fill_runs and _dist(fill_runs[-1][-1], pts[0]) <= 0.01:
+                            fill_runs[-1].extend(pts[1:])
+                        else:
+                            fill_runs.append(pts)
                 else:
                     self.stats["unconverted"].append(
                         (f"item type {kind!r}", "未知图元类型"))

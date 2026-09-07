@@ -188,12 +188,24 @@ pip install -r requirements-gpu.txt   # 仅 GPU 机器
 
 ## 对既有模块的修改记录
 
-`core/pdf2dxf.py` 与 `core/raster2dxf.py` 为 **原样复制，未改任何逻辑**。
+`core/raster2dxf.py` 为 **原样复制，未改任何逻辑**。
+
+`core/pdf2dxf.py` 有一处 bug 修复（2026-09-07）：**贝塞尔曲线围成的填充路径
+（如实心箭头/符号）此前只生成 SPLINE 轮廓、丢失 HATCH 填充**——
+`_convert_drawing` 中 fill_runs 只累积 `'l'` 折线子图元，`'c'` 贝塞尔子图元
+不参与填充边界。修复后 fill 型 path 的贝塞尔边界按 16 段采样累积进
+fill_runs，HATCH 数在 NYSDOT 样例上 3803 → 3965（+162 个实心填充恢复）。
 
 `convert_vector` 需要强制走矢量路径（不触发 `PDFToDXFConverter.run()` 内部的
 `_looks_like_scan` 扫描判定）。实现方式是**在 wrapper 层**定义子类
 `_ForcedVectorConverter`，将 `_looks_like_scan` 固定返回 `False`，
 未改动被复制源码的一行。
+
+`core/compare.py` 的 DXF 渲染已改为**页面坐标系钉死**（`frame_pt` 参数）：
+视口固定为 `[0,页宽pt]×[0,页高pt]`（1 单位=1pt、Y 翻转与转换器约定一致），
+替代原来的"内容自适应缩放 + resize"。修复前 DXF 渲染与 PDF 渲染不在同一
+坐标系，叠差图整体错位（NYSDOT 样例 IoU 0.078，且 DXF 侧墨迹虚高 57%）；
+修复后 IoU 0.589，剩余差异主要来自线宽抗锯齿与文本渲染口径。
 
 ## 已知限制
 

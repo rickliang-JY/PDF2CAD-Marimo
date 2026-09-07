@@ -63,16 +63,25 @@ def _fig_to_rgb(fig: Figure) -> np.ndarray:
 
 
 def render_dxf(dxf_path: str, dpi: int = 150,
-               size_hint: Optional[Tuple[int, int]] = None) -> np.ndarray:
+               size_hint: Optional[Tuple[int, int]] = None,
+               frame_pt: Optional[Tuple[float, float]] = None) -> np.ndarray:
     """渲染 DXF 为 RGB uint8 数组。
 
-    size_hint=(h, w) 时输出缩放到与该尺寸一致（cv2.resize），
-    便于与 PDF 渲染图逐像素对齐做叠差。
+    frame_pt=(w_pt, h_pt)：按 PDF 页面坐标系渲染（本平台转换约定
+    1 DXF 单位 = 1 pt 且 Y 翻转），视口固定为 [0,w_pt]×[0,h_pt]，
+    与 render_pdf_page 的输出逐像素对齐——这是叠差图/IoU 有意义的
+    前提；不传则退回内容自适应（ezdxf 默认行为）。
+    size_hint=(h, w) 时输出缩放到与该尺寸一致（cv2.resize）。
     """
     # recover.readfile 对非严格规范的 DXF 更稳
     doc, auditor = ezrecover.readfile(dxf_path)
     msp = doc.modelspace()
-    if size_hint is not None:
+    if frame_pt is not None:
+        w_pt, h_pt = frame_pt
+        w_px = max(1, int(round(w_pt * dpi / 72.0)))
+        h_px = max(1, int(round(h_pt * dpi / 72.0)))
+        figsize = (w_px / dpi, h_px / dpi)
+    elif size_hint is not None:
         h, w = size_hint
         figsize = (max(w, 1) / dpi, max(h, 1) / dpi)
     else:
@@ -83,12 +92,21 @@ def render_dxf(dxf_path: str, dpi: int = 150,
     try:
         ctx = RenderContext(doc)
         backend = MatplotlibBackend(ax)
-        Frontend(ctx, backend).draw_layout(msp, finalize=True)
+        if frame_pt is not None:
+            # finalize=False：不让 ezdxf 按内容自适应缩放，稍后手动钉死视口
+            Frontend(ctx, backend).draw_layout(msp, finalize=False)
+            ax.set_autoscale_on(False)
+            ax.set_xlim(0.0, float(frame_pt[0]))
+            ax.set_ylim(0.0, float(frame_pt[1]))
+            ax.set_aspect("equal", adjustable="box")
+        else:
+            Frontend(ctx, backend).draw_layout(msp, finalize=True)
         img = _fig_to_rgb(fig)
     finally:
         plt.close(fig)
         gc.collect()
-    if size_hint is not None:
+    if size_hint is not None and frame_pt is None:
+        h, w = size_hint
         img = cv2.resize(img, (w, h), interpolation=cv2.INTER_AREA)
     return img
 
@@ -134,8 +152,18 @@ def compare_page(pdf_path: str, dxf_path: str, page_num: int,
     ink_pdf = _ink_mask(pdf_rgb)
     n_pdf = int(ink_pdf.sum())
 
+    # PDF 页面尺寸（pt）——把 DXF 渲染钉在同一坐标系，保证逐像素对齐
+    _doc = pymupdf.open(pdf_path)
     try:
-        dxf_rgb = render_dxf(dxf_path, dpi=dpi, size_hint=(h, w))
+        _rect = _doc[page_num].rect
+        frame_pt = (float(_rect.width), float(_rect.height))
+    finally:
+        _doc.close()
+
+    try:
+        dxf_rgb = render_dxf(dxf_path, dpi=dpi, frame_pt=frame_pt)
+        if dxf_rgb.shape[:2] != (h, w):  # 四舍五入差异兜底
+            dxf_rgb = cv2.resize(dxf_rgb, (w, h), interpolation=cv2.INTER_AREA)
         dxf_png = _png_bytes(dxf_rgb)
         ink_dxf = _ink_mask(dxf_rgb)
     except Exception as exc:

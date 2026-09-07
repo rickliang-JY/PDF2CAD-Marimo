@@ -444,7 +444,7 @@ def run_all() -> None:
             check("cv 模式 page1 打开", False, repr(exc))
         check("cv 模式 page1 含 LWPOLYLINE", n_lwp > 0, f"LWPOLYLINE 数={n_lwp}")
 
-    # ---- 验收 3：compare_page(page0) iou ∈ (0,1] 且三 PNG 非空 ----
+    # ---- 验收 3：compare_page(page0) iou 阈值 + 三 PNG 非空 ----
     if "vector" in outputs:
         dxf_p0 = outputs["vector"]["pages"][0]["dxf_path"]
         try:
@@ -452,13 +452,36 @@ def run_all() -> None:
             iou = cmp_res["iou"]
             pngs_ok = all(len(cmp_res[k]) > 100 for k in
                           ("pdf_png", "dxf_png", "overlay_png"))
-            iou_ok = isinstance(iou, float) and 0.0 < iou <= 1.0
-            check("compare_page iou ∈ (0,1]", iou_ok, f"iou={iou}")
+            # 坐标系对齐修复后，矢量管线对矢量页 IoU 应显著为正（原阈值 0<iou≤1
+            # 太松：坐标系错位时也能通过。矢量→矢量自对比给 0.25 下限）
+            iou_ok = isinstance(iou, float) and 0.25 < iou <= 1.0
+            check("compare_page iou > 0.25（坐标系已对齐）", iou_ok, f"iou={iou}")
             check("compare_page 三张 PNG 非空", pngs_ok,
                   f"字节数: {len(cmp_res['pdf_png'])}/{len(cmp_res['dxf_png'])}/{len(cmp_res['overlay_png'])}")
         except Exception as exc:
             check("compare_page 运行", False, repr(exc))
             traceback.print_exc()
+
+    # ---- 验收 3b：贝塞尔围成的填充路径必须产出 HATCH（实心箭头回归） ----
+    try:
+        from core.backends import convert_vector
+        fill_pdf = os.path.join(tmp, "fill_bezier.pdf")
+        _d = pymupdf.open()
+        _pg = _d.new_page(width=300, height=300)
+        _sh = _pg.new_shape()
+        _sh.draw_bezier(pymupdf.Point(50, 250), pymupdf.Point(80, 100),
+                        pymupdf.Point(120, 100), pymupdf.Point(150, 250))
+        _sh.draw_bezier(pymupdf.Point(150, 250), pymupdf.Point(120, 220),
+                        pymupdf.Point(80, 220), pymupdf.Point(50, 250))
+        _sh.finish(fill=(0, 0, 0))  # 纯填充，无描边——旧版此处丢失 HATCH
+        _sh.commit()
+        _d.save(fill_pdf)
+        _d.close()
+        rf = convert_vector(fill_pdf, 0, os.path.join(tmp, "out_fill"))
+        n_hatch = rf["stats"].get("HATCH", 0)
+        check("贝塞尔填充路径产出 HATCH", n_hatch >= 1, f"HATCH={n_hatch}")
+    except Exception as exc:
+        check("贝塞尔填充路径产出 HATCH", False, repr(exc))
 
     # ---- 验收 5：CV+ 增强管线专项（虚线矩形 + 旋转文字 + 圆）----
     run_cvplus_checks(tmp)
