@@ -125,8 +125,10 @@ def _(detect, mo, pdf_path):
 
 @app.cell
 def _(analysis, backends, mo):
+    # marimo 惯例：dict 选项是 {显示标签: 值}，MODELS 是 {键: 标签}，需反转
     model_sel = mo.ui.dropdown(
-        options=backends.MODELS, value="auto", label="转换模型：")
+        options={v: k for k, v in backends.MODELS.items()},
+        value=backends.MODELS["auto"], label="转换模型：")
     page_opts = {
         f"第 {r['page'] + 1} 页（{'矢量' if r['kind'] == 'vector' else '扫描'}）":
             r["page"]

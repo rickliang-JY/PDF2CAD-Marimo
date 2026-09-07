@@ -492,6 +492,13 @@ def run_all() -> None:
     except Exception as exc:
         check("marimo check app.py", False, repr(exc))
 
+    # ---- 验收 7b：marimo dict 下拉必须 {标签: 值}（回归：曾致未知模型错误） ----
+    src_app = (ROOT / "app.py").read_text(encoding="utf-8")
+    check("下拉 dict 选项已按 {标签: 值} 反转",
+          "options={v: k for k, v in backends.MODELS.items()}" in src_app
+          and "options=backends.MODELS" not in src_app
+          and "options=_ocr_opts)" not in src_app)
+
     # ---- 验收 8：PASS/FAIL 汇总 ----
     n_pass = sum(1 for _, ok, _ in RESULTS if ok)
     print("\n========== 汇总 ==========")
